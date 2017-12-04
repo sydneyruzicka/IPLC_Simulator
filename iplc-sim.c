@@ -171,13 +171,14 @@ void iplc_sim_init(int index, int blocksize, int assoc)
 
     // Dynamically create our cache based on the information the user entered
     for (i = 0; i < (1<<index); i++) {
+      // allocate valid_bit, tag, and replace space for the associativity
       cache[i].valid_bit = (int *)malloc(sizeof(int));
       cache[i].tag = (int *)malloc(assoc *sizeof(int));
       cache[i].replace = (int *)malloc(assoc * sizeof(int));
       for(j=0; j<assoc; j++) {
-        cache[i].valid_bit[j] = 0;
-        cache[i].tag[j] = 0;
-        cache[i].replace[j] = j;
+        cache[i].valid_bit[j] = 0; // initialize empty line to valid_bit = 0
+        cache[i].tag[j] = 0; // initialize empty line to tag = 0
+        cache[i].replace[j] = j; // 0 = oldest, assoc = newest
       }
     }
 
@@ -196,18 +197,15 @@ void iplc_sim_LRU_replace_on_miss(int index, int tag)
 {
     /* You must implement this function */
     int i = 0;
-    int holder = 0;
+    int holder = 0; // to hold oldest entry before changing
     cache_miss++; // increment miss counter
-    //replace index 0 element,it is the least recently use element
-    holder = cache[index].replace[0];
-    cache[index].tag[holder] = tag;
-    cache[index].valid_bit[holder] = 1;
-    // change the sequence in the slots
-    for (i=1; i<cache_assoc; i++) {
+    holder = cache[index].replace[0]; // oldest entry
+    cache[index].tag[holder] = tag; // update to the proper tag
+    cache[index].valid_bit[holder] = 1; // update to the proper valid bit
+    for (i=1; i<cache_assoc; i++) { // loop to reorganize the last use of the entries
       cache[index].replace[i-1] = cache[index].replace[i];
     }
-    //store current memory at the end of the slot
-    cache[index].replace[cache_assoc-1] = holder;
+    cache[index].replace[cache_assoc-1] = holder; // updates the new entry to MRU
 }
 
 /*
@@ -218,17 +216,17 @@ void iplc_sim_LRU_update_on_hit(int index, int assoc_entry)
 {
     /* You must implement this function */
     int i = 0;
-    int match_entry = 0;
+    int match_entry = 0; // to hold the index of the assoc_entry that matches
     cache_hit++; // increment hit counter
-    // when find the assoc_entry break the loop
+    // loop to find the assoc_entry and then uses that match_entry number
     for (match_entry = 0; match_entry < cache_assoc; match_entry++) {
       if (cache[index].replace[match_entry] == assoc_entry) { break; }
     }
     for (i = match_entry+1; i < cache_assoc; i++) {
+        // loop to reorganize the last use of the entries
         cache[index].replace[i-1] = cache[index].replace[i];
     }
-    //change the last index to assoc_entry
-    cache[index].replace[cache_assoc-1] = assoc_entry;
+    cache[index].replace[cache_assoc-1] = assoc_entry; // updates the new entry to MRU
 }
 
 /*
