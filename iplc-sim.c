@@ -172,7 +172,7 @@ void iplc_sim_init(int index, int blocksize, int assoc)
     // Dynamically create our cache based on the information the user entered
     for (i = 0; i < (1<<index); i++) {
       // allocate valid_bit, tag, and replace space for the associativity
-      cache[i].valid_bit = (int *)malloc(sizeof(int));
+      cache[i].valid_bit = (int *)malloc(assoc * sizeof(int));
       cache[i].tag = (int *)malloc(assoc *sizeof(int));
       cache[i].replace = (int *)malloc(assoc * sizeof(int));
       for(j=0; j<assoc; j++) {
