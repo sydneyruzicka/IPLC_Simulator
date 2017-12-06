@@ -243,7 +243,7 @@ int iplc_sim_trap_address(unsigned int address)
     // Call the appropriate function for a miss or hit
     // bit shift calculation to get tag and index for the address given
     mask = (1 << cache_index) - 1; // gives us the proper mask
-    index = address >> cache_blockoffsetbits & mask; // calculation for index
+    index = (address >> cache_blockoffsetbits) & mask; // calculation for index
     tag = address >> (cache_blockoffsetbits + cache_index); // calculation for tag
     printf("Address %x: Tag= %x, Index= %x \n", address, tag, index);
     cache_access++; // increment access counter for hit or miss
@@ -338,7 +338,6 @@ void iplc_sim_push_pipeline_stage()
 
     /* 1. Count WRITEBACK stage is "retired" -- This I'm giving you */
     if (pipeline[WRITEBACK].instruction_address) {
-        instruction_count++;
         if (debug)
             printf("DEBUG: Retired Instruction at 0x%x, Type %d, at Time %u \n",
                    pipeline[WRITEBACK].instruction_address, pipeline[WRITEBACK].itype, pipeline_cycles);
@@ -382,7 +381,6 @@ void iplc_sim_push_pipeline_stage()
             }
           }
         if(inserted_nop == 1) { // insert nop instruction
-          instruction_count++; // adding an instruction so increment IC
           pipeline[WRITEBACK] = pipeline[MEM];
           pipeline[MEM].itype = NOP;
           pipeline[MEM].instruction_address = 0x0;
@@ -426,6 +424,7 @@ void iplc_sim_push_pipeline_stage()
 void iplc_sim_process_pipeline_rtype(char *instruction, int dest_reg, int reg1, int reg2_or_constant)
 {
     /* This is an example of what you need to do for the rest */
+    int alu_reg=-9999;
     iplc_sim_push_pipeline_stage();
 
     pipeline[FETCH].itype = RTYPE;
@@ -435,6 +434,23 @@ void iplc_sim_process_pipeline_rtype(char *instruction, int dest_reg, int reg1, 
     pipeline[FETCH].stage.rtype.reg1 = reg1;
     pipeline[FETCH].stage.rtype.reg2_or_constant = reg2_or_constant;
     pipeline[FETCH].stage.rtype.dest_reg = dest_reg;
+
+    if(pipeline[ALU].itype == 1) { // if two instructions previous was a rtype
+      if((pipeline[ALU].stage.rtype.reg1 != 0) &&
+         (pipeline[ALU].stage.rtype.reg2_or_constant != 0)) { // not case of reg = 0 + 0
+        alu_reg = pipeline[ALU].stage.rtype.dest_reg; // reg that can cause a hazard
+      }
+    } else if (pipeline[ALU].itype == 4) { // if two instructions previous was a branch
+      alu_reg = pipeline[ALU].stage.branch.reg1; // reg that can cause a hazard
+    }
+    if(reg1 == alu_reg || reg2_or_constant == alu_reg) { // check for hazard
+      pipeline[WRITEBACK] = pipeline[MEM]; // forward WB to be MEM
+      pipeline[MEM] = pipeline[ALU]; // forward MEM to be ALU
+      pipeline[ALU].itype = NOP; // make ALU a NOP
+      pipeline[ALU].instruction_address = 0x0; // update to empty address
+    }
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_lw(int dest_reg, int base_reg, unsigned int data_address)
@@ -449,6 +465,8 @@ void iplc_sim_process_pipeline_lw(int dest_reg, int base_reg, unsigned int data_
     pipeline[FETCH].stage.lw.data_address = data_address;
     pipeline[FETCH].stage.lw.dest_reg = dest_reg;
     pipeline[FETCH].stage.lw.base_reg = base_reg;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_sw(int src_reg, int base_reg, unsigned int data_address)
@@ -463,11 +481,14 @@ void iplc_sim_process_pipeline_sw(int src_reg, int base_reg, unsigned int data_a
     pipeline[FETCH].stage.sw.data_address = data_address;
     pipeline[FETCH].stage.sw.src_reg = src_reg;
     pipeline[FETCH].stage.sw.base_reg = base_reg;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_branch(int reg1, int reg2)
 {
     /* You must implement this function */
+    int alu_reg;
     iplc_sim_push_pipeline_stage();
 
     pipeline[FETCH].itype = BRANCH; // for branches
@@ -476,6 +497,16 @@ void iplc_sim_process_pipeline_branch(int reg1, int reg2)
 
     pipeline[FETCH].stage.branch.reg1 = reg1;
     pipeline[FETCH].stage.branch.reg2 = reg2;
+
+    alu_reg = pipeline[ALU].stage.branch.reg1; // reg that can cause a hazard
+    if(reg1 == alu_reg || reg2 == alu_reg) { // check for hazard
+      pipeline[WRITEBACK] = pipeline[MEM]; // forward WB to be MEM
+      pipeline[MEM] = pipeline[ALU]; // forward MEM to be ALU
+      pipeline[ALU].itype = NOP; // make ALU a NOP
+      pipeline[ALU].instruction_address = 0x0; // update to empty address
+    }
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_jump(char *instruction)
@@ -488,6 +519,8 @@ void iplc_sim_process_pipeline_jump(char *instruction)
     pipeline[FETCH].instruction_address = instruction_address;
 
     strcpy(pipeline[FETCH].stage.jump.instruction, instruction);
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_syscall()
@@ -497,15 +530,19 @@ void iplc_sim_process_pipeline_syscall()
 
     pipeline[FETCH].itype = SYSCALL; // for syscalls
     pipeline[FETCH].instruction_address = instruction_address;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_nop()
 {
     /* You must implement this function */
-     iplc_sim_push_pipeline_stage();
+    iplc_sim_push_pipeline_stage();
 
     pipeline[FETCH].itype = NOP; // for nops
     pipeline[FETCH].instruction_address = instruction_address;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 /************************************************************************************************/
