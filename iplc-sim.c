@@ -334,11 +334,11 @@ void iplc_sim_push_pipeline_stage()
 {
     int i;
     int data_hit=1;
-    int normal_process = 1;
+    int normal_process = 1; // flag to know if any stalls occurred
 
     /* 1. Count WRITEBACK stage is "retired" -- This I'm giving you */
     if (pipeline[WRITEBACK].instruction_address) {
-        instruction_count++;
+        //instruction_count++; // adding an instruction so increment IC
         if (debug)
             printf("DEBUG: Retired Instruction at 0x%x, Type %d, at Time %u \n",
                    pipeline[WRITEBACK].instruction_address, pipeline[WRITEBACK].itype, pipeline_cycles);
@@ -347,15 +347,27 @@ void iplc_sim_push_pipeline_stage()
     /* 2. Check for BRANCH and correct/incorrect Branch Prediction */
     if (pipeline[DECODE].itype == BRANCH) {
       int branch_taken = 0;
-      unsigned int fet=0, dec=0;
+      unsigned int fet=0, dec=0; // used to help check branch taken or not taken
       branch_count++; // increment the branch counter
       if (pipeline[FETCH].instruction_address != 0) {
-        fet = pipeline[FETCH].instruction_address; // fetch
-        dec = pipeline[DECODE].instruction_address + 4; // decode for branch not taken
+        fet = pipeline[FETCH].instruction_address; // fetch address
+        dec = pipeline[DECODE].instruction_address + 4; // decode address for not taken
         if(fet != dec) { // check if the branch was taken
           branch_taken = 1; // update flag to true because the branch was taken
         }
         if(branch_taken != (int)branch_predict_taken){ // incorrect branch prediction
+          if(pipeline[FETCH].itype == RTYPE) { // if the last instruction was rtype
+            pipeline[WRITEBACK] = pipeline[MEM]; // forward WB to be MEM
+            pipeline[MEM] = pipeline[ALU]; // forward MEM to be ALU
+            pipeline[ALU] = pipeline[DECODE]; // forward ALU to be DECODE
+            pipeline[DECODE].itype = NOP; // make DECODE a NOP
+            pipeline[DECODE].instruction_address = 0x0; // update NOP empty address
+          } else if (pipeline[FETCH].itype == LW) { // if the last instruction was a lw
+            pipeline[WRITEBACK] = pipeline[ALU]; // forward WB to be ALU for two stalls
+            pipeline[MEM] = pipeline[DECODE]; // forward MEM to be DECODE for two stalls
+            pipeline[DECODE].itype = NOP; // make DECODE a NOP
+            pipeline[DECODE].instruction_address = 0x0; // update NOP empty address
+          }
           pipeline_cycles++; // increment for wrong branch prediction
         } else { // correct branch prediction
           correct_branch_predictions++; // increment for correct branch prediction
@@ -369,25 +381,19 @@ void iplc_sim_push_pipeline_stage()
      *    add delay cycles if needed.
      */
     if (pipeline[MEM].itype == LW) {
-      int inserted_nop = 0;
       data_hit = iplc_sim_trap_address(pipeline[MEM].stage.lw.data_address);
       if(data_hit == 0) {
         printf("DATA MISS:\t Address 0x%x \n", pipeline[MEM].stage.lw.data_address);
-      // check for delay in ALU stage because of the dependence on the item being loaded
-        if(pipeline[ALU].itype == RTYPE) {
+        if(pipeline[ALU].itype == RTYPE) { // check ALU in pipeline to be rtype
           if ((pipeline[ALU].stage.rtype.reg2_or_constant ==
-              pipeline[MEM].stage.lw.dest_reg) || (pipeline[ALU].stage.rtype.reg1 ==
-              pipeline[MEM].stage.lw.dest_reg)) {
-                inserted_nop = 1; // flag to insert a nop instruction
+            pipeline[MEM].stage.lw.dest_reg) || (pipeline[ALU].stage.rtype.reg1 ==
+            pipeline[MEM].stage.lw.dest_reg)) { // check for a hazard
+              pipeline[WRITEBACK] = pipeline[MEM]; // forward WB to be MEM
+              pipeline[MEM].itype = NOP; // make DECODE a NOP
+              pipeline[MEM].instruction_address = 0x0; // update NOP empty address
             }
           }
-        if(inserted_nop == 1) { // insert nop instruction
-          instruction_count++;
-          pipeline[WRITEBACK] = pipeline[MEM];
-          pipeline[MEM].itype = NOP;
-          pipeline[MEM].instruction_address = 0x0;
-        }
-        normal_process = 0;
+        normal_process = 0; // update normal process flag to false
         pipeline_cycles += CACHE_MISS_DELAY; // increment the stall penalty
       } else {
         printf("DATA HIT:\t Address 0x%x \n", pipeline[MEM].stage.lw.data_address);
@@ -398,9 +404,18 @@ void iplc_sim_push_pipeline_stage()
     if (pipeline[MEM].itype == SW) {
       data_hit = iplc_sim_trap_address(pipeline[MEM].stage.sw.data_address);
       if(data_hit == 0) { // check if there was not a data hit
-        normal_process = 0;
-        pipeline_cycles += CACHE_MISS_DELAY; // increment the stall penalty
         printf("DATA MISS:\t Address 0x%x \n", pipeline[MEM].stage.sw.data_address);
+        if(pipeline[ALU].itype == RTYPE) { // check ALU in pipeline to be rtype
+          if ((pipeline[ALU].stage.rtype.reg2_or_constant ==
+                pipeline[MEM].stage.sw.src_reg) || (pipeline[ALU].stage.rtype.reg1 ==
+                pipeline[MEM].stage.sw.src_reg)) { // check for a hazard
+            pipeline[WRITEBACK] = pipeline[MEM]; // forward WB to be MEM
+            pipeline[MEM].itype = NOP; // make DECODE a NOP
+            pipeline[MEM].instruction_address = 0x0; // update NOP empty address
+          }
+        }
+        normal_process = 0; // update normal process flag to false
+        pipeline_cycles += CACHE_MISS_DELAY; // increment the stall penalty
       } else {
         printf("DATA HIT:\t Address 0x%x \n", pipeline[MEM].stage.sw.data_address);
       }
@@ -438,6 +453,8 @@ void iplc_sim_process_pipeline_rtype(char *instruction, int dest_reg, int reg1, 
     pipeline[FETCH].stage.rtype.reg1 = reg1;
     pipeline[FETCH].stage.rtype.reg2_or_constant = reg2_or_constant;
     pipeline[FETCH].stage.rtype.dest_reg = dest_reg;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_lw(int dest_reg, int base_reg, unsigned int data_address)
@@ -452,6 +469,8 @@ void iplc_sim_process_pipeline_lw(int dest_reg, int base_reg, unsigned int data_
     pipeline[FETCH].stage.lw.data_address = data_address;
     pipeline[FETCH].stage.lw.dest_reg = dest_reg;
     pipeline[FETCH].stage.lw.base_reg = base_reg;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_sw(int src_reg, int base_reg, unsigned int data_address)
@@ -466,6 +485,8 @@ void iplc_sim_process_pipeline_sw(int src_reg, int base_reg, unsigned int data_a
     pipeline[FETCH].stage.sw.data_address = data_address;
     pipeline[FETCH].stage.sw.src_reg = src_reg;
     pipeline[FETCH].stage.sw.base_reg = base_reg;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_branch(int reg1, int reg2)
@@ -479,6 +500,8 @@ void iplc_sim_process_pipeline_branch(int reg1, int reg2)
 
     pipeline[FETCH].stage.branch.reg1 = reg1;
     pipeline[FETCH].stage.branch.reg2 = reg2;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_jump(char *instruction)
@@ -491,6 +514,8 @@ void iplc_sim_process_pipeline_jump(char *instruction)
     pipeline[FETCH].instruction_address = instruction_address;
 
     strcpy(pipeline[FETCH].stage.jump.instruction, instruction);
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_syscall()
@@ -500,6 +525,8 @@ void iplc_sim_process_pipeline_syscall()
 
     pipeline[FETCH].itype = SYSCALL; // for syscalls
     pipeline[FETCH].instruction_address = instruction_address;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 void iplc_sim_process_pipeline_nop()
@@ -509,6 +536,8 @@ void iplc_sim_process_pipeline_nop()
 
     pipeline[FETCH].itype = NOP; // for nops
     pipeline[FETCH].instruction_address = instruction_address;
+
+    instruction_count++; // adding an instruction so increment IC
 }
 
 /************************************************************************************************/
